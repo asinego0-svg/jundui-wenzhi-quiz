@@ -94,6 +94,18 @@ label{font-size:13px;color:var(--text-dim);margin-right:8px}
   .btn{padding:8px 14px;font-size:13px}
   .exam-grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}
   .timer{font-size:28px}
+  /* Sticky quiz controls on mobile so "next" button is always reachable */
+  .quiz-controls{
+    position:sticky;
+    bottom:0;
+    background:var(--bg-card);
+    padding:10px 0;
+    margin-top:8px;
+    z-index:10;
+    border-top:1px solid var(--border);
+  }
+  /* Feedback area should not push button too far down */
+  #quiz-feedback{margin-bottom:4px}
 }
 </style>
 </head>
@@ -127,14 +139,16 @@ label{font-size:13px;color:var(--text-dim);margin-right:8px}
       <div class="question-nav" id="q-nav"></div>
       <div class="filter-bar">
         <label>模块:</label><select id="filter-module"><option value="">全部</option></select>
-        <label>模式:</label><select id="filter-mode"><option value="random">随机</option><option value="seq">顺序</option><option value="wrong">错题</option><option value="fav">收藏</option></select>
+        <label>抽题:</label><select id="filter-mode"><option value="random">随机</option><option value="seq">顺序</option><option value="wrong">错题</option><option value="fav">收藏</option></select>
         <label>题数:</label><input type="number" id="filter-count" value="30" min="5" max="200" style="width:80px">
+        <label>刷题:</label><select id="practice-mode"><option value="study">背题模式</option><option value="practice">练习模式</option></select>
         <button class="btn btn-gold btn-sm" onclick="startPractice()">开始</button>
       </div>
       <div id="quiz-area"></div>
       <div id="quiz-feedback"></div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center" class="quiz-controls">
         <button class="btn btn-gold" id="btn-submit" onclick="submitAnswer()">提交答案</button>
+        <button class="btn btn-gold" id="btn-submit-mul" onclick="submitMultiAnswer()" style="display:none">确认答案</button>
         <button class="btn btn-outline btn-sm" id="btn-prev" onclick="prevQuestion()" style="display:none">⬅ 上一题</button>
         <button class="btn btn-outline" id="btn-next" onclick="nextQuestion()" style="display:none">下一题 ➡</button>
         <button class="btn btn-outline btn-sm" id="btn-fav" onclick="toggleFav()" style="display:none" title="收藏/取消收藏">⭐</button>
@@ -413,12 +427,17 @@ function startPractice() {
     answers: {},
     score: 0,
     total: count,
-    completed: false
+    completed: false,
+    mode: document.getElementById('practice-mode').value || 'study'
   };
   
   document.getElementById('q-progress').textContent = '第 1/' + count + ' 题';
   document.getElementById('quiz-feedback').innerHTML = '';
-  document.getElementById('btn-submit').style.display = '';
+  
+  // In practice mode, hide submit button (auto-advance); in study mode, show it
+  const isPractice = state.practice.mode === 'practice';
+  document.getElementById('btn-submit').style.display = isPractice ? 'none' : '';
+  document.getElementById('btn-submit-mul').style.display = 'none';
   document.getElementById('btn-next').style.display = 'none';
   document.getElementById('btn-prev').style.display = 'none';
   document.getElementById('btn-fav').style.display = '';
@@ -449,7 +468,9 @@ function renderQuiz() {
   const isMulti = q.type === 'multi';
   
   document.getElementById('q-progress').textContent = `第 ${p.currentIdx+1}/${p.total} 题`;
-  document.getElementById('btn-submit').style.display = isAnswered ? 'none' : '';
+  const isPractice = p.mode === 'practice';
+  document.getElementById('btn-submit').style.display = (!isAnswered && !isPractice) ? '' : 'none';
+  document.getElementById('btn-submit-mul').style.display = (!isAnswered && isPractice && isMulti) ? '' : 'none';
   document.getElementById('btn-next').style.display = isAnswered ? '' : 'none';
   document.getElementById('btn-prev').style.display = p.currentIdx > 0 ? '' : 'none';
   
@@ -516,6 +537,88 @@ function selectOption(label) {
     document.querySelectorAll('#quiz-area .option').forEach(el => {
       el.classList.toggle('selected', el.dataset.opt === label);
     });
+    
+    // In practice mode, auto-advance for single choice after a short delay
+    if (p.mode === 'practice') {
+      setTimeout(() => {
+        // Record answer silently (no feedback)
+        const correctAns = q.answer || '';
+        const isCorrect = label === correctAns;
+        if (isCorrect) p.score++;
+        
+        // Update history
+        if (!state.history[q.id]) state.history[q.id] = {correct:0, wrong:0, lastTime:''};
+        if (isCorrect) state.history[q.id].correct++;
+        else state.history[q.id].wrong++;
+        state.history[q.id].lastTime = new Date().toISOString();
+        
+        // Wrong book
+        if (!isCorrect) {
+          state.wrongBook[q.id] = {module: q.module, question: q.question, answer: correctAns, type: q.type, timestamp: Date.now()};
+        } else if (state.wrongBook[q.id]) {
+          delete state.wrongBook[q.id];
+        }
+        
+        // Daily stats
+        const today = new Date().toISOString().slice(0,10);
+        if (!state.dailyStats[today]) state.dailyStats[today] = {total:0, correct:0};
+        state.dailyStats[today].total++;
+        if (isCorrect) state.dailyStats[today].correct++;
+        
+        saveState();
+        
+        // Auto-advance
+        p.currentIdx++;
+        if (p.currentIdx >= p.total) {
+          endPractice();
+        } else {
+          renderQNav();
+          renderQuiz();
+        }
+      }, 200);
+    }
+  }
+}
+
+function submitMultiAnswer() {
+  const p = state.practice;
+  const q = p.questions[p.currentIdx];
+  const userAns = p.answers[p.currentIdx] || '';
+  const correctAns = q.answer || '';
+  const isCorrect = userAns === correctAns;
+  
+  if (!userAns) { alert('请至少选择一个选项'); return; }
+  
+  if (isCorrect) p.score++;
+  
+  // Update history
+  if (!state.history[q.id]) state.history[q.id] = {correct:0, wrong:0, lastTime:''};
+  if (isCorrect) state.history[q.id].correct++;
+  else state.history[q.id].wrong++;
+  state.history[q.id].lastTime = new Date().toISOString();
+  
+  // Wrong book
+  if (!isCorrect) {
+    state.wrongBook[q.id] = {module: q.module, question: q.question, answer: correctAns, type: q.type, timestamp: Date.now()};
+  } else if (state.wrongBook[q.id]) {
+    delete state.wrongBook[q.id];
+  }
+  
+  // Daily stats
+  const today = new Date().toISOString().slice(0,10);
+  if (!state.dailyStats[today]) state.dailyStats[today] = {total:0, correct:0};
+  state.dailyStats[today].total++;
+  if (isCorrect) state.dailyStats[today].correct++;
+  
+  saveState();
+  
+  // Auto-advance in practice mode
+  p.currentIdx++;
+  if (p.currentIdx >= p.total) {
+    endPractice();
+  } else {
+    renderQNav();
+    renderQuiz();
   }
 }
 
@@ -569,13 +672,17 @@ function submitAnswer() {
 function nextQuestion() {
   state.practice.currentIdx++;
   document.getElementById('quiz-feedback').innerHTML = '';
-  document.getElementById('btn-submit').style.display = '';
-  document.getElementById('btn-next').style.display = 'none';
-  document.getElementById('btn-prev').style.display = 'none';
-  if (state.practice.currentIdx >= state.practice.total) {
+  const p = state.practice;
+  if (p.currentIdx >= p.total) {
     endPractice();
     return;
   }
+  const isAnswered = p.answers[p.currentIdx] !== undefined;
+  const isPractice = p.mode === 'practice';
+  document.getElementById('btn-submit').style.display = (!isAnswered && !isPractice) ? '' : 'none';
+  document.getElementById('btn-submit-mul').style.display = 'none';
+  document.getElementById('btn-next').style.display = isAnswered ? '' : 'none';
+  document.getElementById('btn-prev').style.display = p.currentIdx > 0 ? '' : 'none';
   renderQNav();
   renderQuiz();
 }
@@ -584,10 +691,15 @@ function prevQuestion() {
   if (state.practice.currentIdx <= 0) return;
   state.practice.currentIdx--;
   document.getElementById('quiz-feedback').innerHTML = '';
-  const isAnswered = state.practice.answers[state.practice.currentIdx] !== undefined;
-  document.getElementById('btn-submit').style.display = isAnswered ? 'none' : '';
+  const p = state.practice;
+  const isAnswered = p.answers[p.currentIdx] !== undefined;
+  const isPractice = p.mode === 'practice';
+  const q = p.questions[p.currentIdx];
+  const isMulti = q.type === 'multi';
+  document.getElementById('btn-submit').style.display = (!isAnswered && !isPractice) ? '' : 'none';
+  document.getElementById('btn-submit-mul').style.display = (!isAnswered && isPractice && isMulti) ? '' : 'none';
   document.getElementById('btn-next').style.display = isAnswered ? '' : 'none';
-  document.getElementById('btn-prev').style.display = state.practice.currentIdx > 0 ? '' : 'none';
+  document.getElementById('btn-prev').style.display = p.currentIdx > 0 ? '' : 'none';
   renderQNav();
   renderQuiz();
 }
@@ -595,8 +707,13 @@ function prevQuestion() {
 function jumpTo(idx) {
   state.practice.currentIdx = idx;
   document.getElementById('quiz-feedback').innerHTML = '';
-  const isAnswered = state.practice.answers[idx] !== undefined;
-  document.getElementById('btn-submit').style.display = isAnswered ? 'none' : '';
+  const p = state.practice;
+  const isAnswered = p.answers[idx] !== undefined;
+  const isPractice = p.mode === 'practice';
+  const q = p.questions[idx];
+  const isMulti = q.type === 'multi';
+  document.getElementById('btn-submit').style.display = (!isAnswered && !isPractice) ? '' : 'none';
+  document.getElementById('btn-submit-mul').style.display = (!isAnswered && isPractice && isMulti) ? '' : 'none';
   document.getElementById('btn-next').style.display = isAnswered ? '' : 'none';
   document.getElementById('btn-prev').style.display = idx > 0 ? '' : 'none';
   renderQNav();
@@ -628,14 +745,82 @@ function endPractice() {
   const answered = Object.keys(p.answers).length;
   const rate = answered > 0 ? Math.round(p.score/answered*100) : 0;
   
-  document.getElementById('modal-title').textContent = '本轮练习结束';
+  document.getElementById('modal-title').textContent = p.mode === 'practice' ? '练习完成' : '本轮练习结束';
   document.getElementById('modal-score').textContent = `${p.score}/${answered} (${rate}%)`;
-  document.getElementById('modal-detail').innerHTML = `
+  
+  let detailHtml = `
     <p>共${p.total}题，作答${answered}题，正确${p.score}题</p>
     <div class="score-bar" style="margin-top:8px"><div class="score-fill" style="width:${rate}%;background:${rate>=60?'var(--green)':'var(--red)'}"></div></div>`;
+  
+  // In practice mode, add explanation buttons
+  if (p.mode === 'practice') {
+    const wrongCount = answered - p.score;
+    detailHtml += `
+      <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">
+        <button class="btn btn-gold btn-sm" onclick="showPracticeReview('all')">查看全部解析</button>
+        <button class="btn btn-outline btn-sm" onclick="showPracticeReview('wrong')">只看错题解析 (${wrongCount})</button>
+        <button class="btn btn-outline btn-sm" onclick="closeModal()">关闭</button>
+      </div>`;
+  }
+  
+  document.getElementById('modal-detail').innerHTML = detailHtml;
   document.getElementById('result-modal').classList.add('show');
   
   state.practice.completed = true;
+}
+
+function showPracticeReview(filter) {
+  const p = state.practice;
+  closeModal();
+  
+  let html = '<div style="margin-bottom:16px"><button class="btn btn-outline btn-sm" onclick="switchTab(\'practice\')">返回答题</button></div>';
+  html += `<h2>练习解析 ${filter === 'wrong' ? '（仅错题）' : '（全部）'}</h2>`;
+  
+  let count = 0;
+  for (let i = 0; i < p.total; i++) {
+    const q = p.questions[i];
+    const userAns = p.answers[i] || '未作答';
+    const correctAns = q.answer || '';
+    const isCorrect = userAns === correctAns;
+    
+    // Skip correct ones if filter is 'wrong'
+    if (filter === 'wrong' && isCorrect) continue;
+    
+    count++;
+    const labels = q.type === 'multi' ? ['A','B','C','D','E'] : ['A','B','C','D'];
+    let optHtml = '';
+    labels.forEach(l => {
+      if (!q.options[l]) return;
+      let color = 'var(--text-dim)';
+      if (correctAns.includes(l)) color = 'var(--green)';
+      else if (userAns.includes(l)) color = 'var(--red)';
+      optHtml += `<div style="font-size:13px;color:${color};margin-left:12px;margin-top:2px">${l}. ${q.options[l]}${correctAns.includes(l) ? ' ✓' : ''}${userAns.includes(l) && !correctAns.includes(l) ? ' ✗' : ''}</div>`;
+    });
+    
+    html += `<div class="card" style="margin-bottom:12px;padding:12px">
+      <div style="font-size:14px;margin-bottom:6px"><strong>${i+1}.</strong> ${q.question} <span class="tag tag-${q.type==='multi'?'multi':'single'}">${q.type==='multi'?'多选':'单选'}</span> ${isCorrect ? '<span style="color:var(--green)">✓ 正确</span>' : '<span style="color:var(--red)">✗ 错误</span>'}</div>
+      ${optHtml}
+      <div style="margin-top:6px;font-size:13px;color:var(--gold)">你的答案: ${userAns} | 正确答案: ${correctAns}</div>
+      ${q.explanation ? `<div style="margin-top:6px;font-size:13px;color:var(--text-dim);line-height:1.5;padding:8px;background:rgba(255,255,255,0.05);border-radius:6px">${q.explanation}</div>` : ''}
+    </div>`;
+  }
+  
+  if (count === 0) {
+    html += '<div class="empty-state"><p>没有错题，全部正确！🎉</p></div>';
+  }
+  
+  html += `<div style="margin-top:16px"><button class="btn btn-gold" onclick="switchTab(\'practice\')">继续答题</button></div>`;
+  
+  document.getElementById('quiz-area').innerHTML = html;
+  document.getElementById('quiz-feedback').innerHTML = '';
+  document.getElementById('q-nav').innerHTML = '';
+  document.getElementById('q-progress').textContent = '';
+  // Hide all buttons
+  ['btn-submit','btn-submit-mul','btn-next','btn-prev','btn-fav','btn-end'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+  document.getElementById('fav-note').style.display = 'none';
 }
 
 function closeModal() {
@@ -1045,8 +1230,14 @@ document.addEventListener('keydown', e => {
     return;
   }
   
-  if (e.key === 'Enter' && document.getElementById('btn-submit').style.display !== 'none') {
-    submitAnswer();
+  if (e.key === 'Enter') {
+    if (document.getElementById('btn-submit').style.display !== 'none') {
+      submitAnswer();
+    } else if (document.getElementById('btn-submit-mul').style.display !== 'none') {
+      submitMultiAnswer();
+    } else if (document.getElementById('btn-next').style.display !== 'none') {
+      nextQuestion();
+    }
   } else if (e.key === 'ArrowRight' && document.getElementById('btn-next').style.display !== 'none') {
     nextQuestion();
   } else if (e.key === 'ArrowLeft' && document.getElementById('btn-prev').style.display !== 'none') {
