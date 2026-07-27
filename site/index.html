@@ -410,40 +410,28 @@ async function syncToSupabase(isAuto) {
   if (isAuto && statusEl) statusEl.innerHTML = '🔄 同步中...';
 
   try {
-    const resp = await fetch(`${SUPABASE_URL}/rest/v1/user_progress?username=eq.${encodeURIComponent(currentUser)}`, {
-      method: 'PATCH',
+    // Always use POST + upsert (merge-duplicates) - handles both create and update
+    const resp = await fetch(`${SUPABASE_URL}/rest/v1/user_progress`, {
+      method: 'POST',
       headers: {
         'apikey': SUPABASE_KEY,
         'Authorization': `Bearer ${SUPABASE_KEY}`,
         'Content-Type': 'application/json',
-        'Prefer': 'return=minimal'
+        'Accept': 'application/json',
+        'Prefer': 'return=minimal,resolution=merge-duplicates'
       },
-      body: JSON.stringify({ data: payload, updated_at: new Date().toISOString() })
+      body: JSON.stringify({ username: currentUser, data: payload, updated_at: new Date().toISOString() })
     });
 
-    if (resp.status === 204 || resp.ok) {
+    if (resp.ok || resp.status === 201) {
       if (statusEl) statusEl.innerHTML = `🟢 已同步（${new Date().toLocaleTimeString()}）`;
-    } else if (resp.status === 404 || resp.status === 406) {
-      // Row doesn't exist yet - create it with POST + upsert
-      const upsertResp = await fetch(`${SUPABASE_URL}/rest/v1/user_progress`, {
-        method: 'POST',
-        headers: {
-          'apikey': SUPABASE_KEY,
-          'Authorization': `Bearer ${SUPABASE_KEY}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'return=minimal,resolution=merge-duplicates'
-        },
-        body: JSON.stringify({ username: currentUser, data: payload, updated_at: new Date().toISOString() })
-      });
-      if (upsertResp.ok || upsertResp.status === 201) {
-        if (statusEl) statusEl.innerHTML = `🟢 已同步（${new Date().toLocaleTimeString()}）`;
-      } else {
-        if (statusEl) statusEl.innerHTML = '🔴 同步失败，请稍后重试';
-      }
     } else {
-      if (statusEl) statusEl.innerHTML = '🔴 同步失败，请稍后重试';
+      const errText = await resp.text().catch(() => '');
+      console.error('Supabase sync error:', resp.status, errText);
+      if (statusEl) statusEl.innerHTML = `🔴 同步失败(${resp.status})，进度已保存在本地`;
     }
   } catch(e) {
+    console.error('Supabase network error:', e);
     if (statusEl) statusEl.innerHTML = '🔴 网络错误，进度已保存在本地';
   }
 }
