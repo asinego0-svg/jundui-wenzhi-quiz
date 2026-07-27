@@ -191,6 +191,31 @@ async function loadData() {
     ]);
     QUIZ_DATA = await quizResp.json();
     EXAM_DATA = await examResp.json();
+    // Normalize quiz data: convert array-based options/answer to object/letter-string
+    const LETTERS = ['A','B','C','D','E','F'];
+    QUIZ_DATA.forEach(q => {
+      if (Array.isArray(q.options)) {
+        const obj = {};
+        q.options.forEach((opt, i) => { if (i < LETTERS.length) obj[LETTERS[i]] = opt; });
+        q.options = obj;
+      }
+      if (Array.isArray(q.answer)) {
+        q.answer = q.answer.map(idx => LETTERS[idx] || '').sort().join('');
+      }
+    });
+    // Normalize exam data the same way (in case some are arrays)
+    EXAM_DATA.forEach(exam => {
+      if (exam.questions) exam.questions.forEach(q => {
+        if (Array.isArray(q.options)) {
+          const obj = {};
+          q.options.forEach((opt, i) => { if (i < LETTERS.length) obj[LETTERS[i]] = opt; });
+          q.options = obj;
+        }
+        if (Array.isArray(q.answer)) {
+          q.answer = q.answer.map(idx => LETTERS[idx] || '').sort().join('');
+        }
+      });
+    });
     dataLoaded = true;
     console.log('Loaded ' + QUIZ_DATA.length + ' quiz questions, ' + EXAM_DATA.length + ' exam papers');
     initApp();
