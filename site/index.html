@@ -586,20 +586,22 @@ function renderDashboard() {
   const modules = {};
   QUIZ_DATA.forEach(q => {
     const m = q.module || '其他';
-    if (!modules[m]) modules[m] = {total:0, correct:0};
+    if (!modules[m]) modules[m] = {total:0, correct:0, answered:0};
     modules[m].total++;
     const h = state.history[q.id];
-    if (h && h.correct) modules[m].correct++;
+    if (h) { modules[m].answered++; if (h.correct) modules[m].correct++; }
   });
   
   let modHtml = '<div style="display:flex;flex-direction:column;gap:10px">';
   for (const [name, data] of Object.entries(modules)) {
-    const pct = data.total > 0 ? Math.round(data.correct/data.total*100) : 0;
+    const pct = data.answered > 0 ? Math.round(data.correct/data.answered*100) : 0;
+    const progressPct = data.total > 0 ? Math.round(data.answered/data.total*100) : 0;
     const color = pct >= 80 ? 'var(--green)' : pct >= 60 ? 'var(--gold)' : 'var(--red)';
     modHtml += `<div style="display:flex;align-items:center;gap:10px">
-      <span style="width:100px;font-size:13px">${name}</span>
-      <div class="score-bar" style="flex:1"><div class="score-fill" style="width:${pct}%;background:${color}"></div></div>
-      <span style="font-size:13px;width:50px;text-align:right;color:${color}">${pct}%</span>
+      <span style="width:90px;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${name}</span>
+      <span style="font-size:11px;color:var(--text-dim);width:60px;text-align:center;flex-shrink:0">${data.answered}/${data.total}</span>
+      <div class="score-bar" style="flex:1;position:relative"><div class="score-fill" style="width:${pct}%;background:${color}"></div><div style="position:absolute;top:0;left:0;height:100%;width:${progressPct}%;background:rgba(255,255,255,.06);border-radius:4px"></div></div>
+      <span style="font-size:13px;width:42px;text-align:right;color:${color};flex-shrink:0">${pct}%</span>
     </div>`;
   }
   modHtml += '</div>';
@@ -1453,13 +1455,18 @@ function renderStats() {
   
   let html = '<h3>模块掌握情况</h3>';
   for (const [name, data] of Object.entries(modules)) {
-    const total = data.correct + data.wrong;
-    const pct = total > 0 ? Math.round(data.correct/total*100) : 0;
-    html += `<div style="margin-bottom:12px">
-      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
-        <span>${name}</span><span>${data.correct}/${total} (${pct}%)</span>
+    const answered = data.correct + data.wrong;
+    const pct = answered > 0 ? Math.round(data.correct/answered*100) : 0;
+    const progressPct = data.total > 0 ? Math.round(answered/data.total*100) : 0;
+    html += `<div style="margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;margin-bottom:4px">
+        <span style="font-weight:600">${name}</span>
+        <span style="color:var(--text-dim)">已做 ${answered}/${data.total} 题 · 正确率 <span style="color:${pct>=80?'var(--green)':pct>=60?'var(--gold)':'var(--red)'};font-weight:600">${pct}%</span></span>
       </div>
-      <div class="score-bar"><div class="score-fill" style="width:${Math.max(pct,5)}%;background:var(--blue)"></div></div>
+      <div class="score-bar" style="position:relative">
+        <div class="score-fill" style="width:${Math.max(pct,3)}%;background:${pct>=80?'var(--green)':pct>=60?'var(--gold)':'var(--red)'}"></div>
+        <div style="position:absolute;top:0;left:0;height:100%;width:${progressPct}%;background:rgba(255,255,255,.06);border-radius:4px"></div>
+      </div>
     </div>`;
   }
   
