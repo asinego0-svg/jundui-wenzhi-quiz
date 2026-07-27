@@ -538,6 +538,12 @@ function selectOption(label) {
       el.classList.toggle('selected', el.dataset.opt === label);
     });
     
+    // In study mode, auto-submit for single choice immediately
+    if (p.mode === 'study') {
+      submitAnswer();
+      return;
+    }
+    
     // In practice mode, auto-advance for single choice after a short delay
     if (p.mode === 'practice') {
       setTimeout(() => {
