@@ -217,13 +217,10 @@ label{font-size:13px;color:var(--text-dim);margin-right:8px}
     </div>
     <hr style="border:none;border-top:1px solid var(--border);margin:20px 0">
     <div style="margin:20px 0">
-      <label style="color:var(--text-dim);font-size:13px">跨设备同步（可选）</label>
-      <p style="color:var(--text-dim);font-size:12px;margin-top:4px">输入 GitHub Token 开启自动同步，换电脑/手机也能保持进度</p>
-      <input type="password" id="settings-token" placeholder="ghp_ 开头的 GitHub Token" style="width:100%;padding:10px 14px;font-size:14px;border:1px solid var(--border);border-radius:8px;background:var(--bg-main);color:var(--text);margin-top:6px;box-sizing:border-box">
+      <label style="color:var(--text-dim);font-size:13px">跨设备云端同步</label>
+      <p style="color:var(--text-dim);font-size:12px;margin-top:4px">进度自动同步到云端，换电脑/手机登录同名即可保持进度</p>
       <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-        <button class="btn btn-gold btn-sm" onclick="saveToken()">保存 Token</button>
-        <button class="btn btn-outline btn-sm" onclick="syncNow()">立即同步</button>
-        <button class="btn btn-outline btn-sm" onclick="removeToken()" style="color:var(--red)">清除</button>
+        <button class="btn btn-gold btn-sm" onclick="syncNow()">立即同步</button>
       </div>
       <div id="sync-status" style="margin-top:8px;font-size:13px;color:var(--text-dim)"></div>
     </div>
@@ -283,12 +280,10 @@ async function loadData() {
 }
 
 // ====== STATE ======
-const SYNC_REPO = 'asinego0-svg/jundui-wenzhi-quiz';
-const SYNC_BRANCH = 'main';
+const SUPABASE_URL = 'https://xvzpmtvrghdcomjhjeb.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_JaoWlfSRLkhr-m7qoI8_9A_PZ_gqHsm';
 let currentUser = '';
-let githubToken = '';
 let syncTimer = null;
-let fileShaCache = {}; // cache SHA for each file to enable updates
 
 let state = {
   practice: { questions: [], currentIdx: 0, answers: {}, score: 0, total: 0, completed: false, mode: 'study' },
@@ -329,15 +324,14 @@ function saveState() {
 }
 
 function scheduleSync() {
-  if (!githubToken || !currentUser) return;
+  if (!currentUser) return;
   if (syncTimer) clearTimeout(syncTimer);
-  syncTimer = setTimeout(() => syncToGitHub(true), 3000); // 3s debounce
+  syncTimer = setTimeout(() => syncToSupabase(true), 3000); // 3s debounce
 }
 
 // ====== USER MANAGEMENT ======
 function initUser() {
   currentUser = localStorage.getItem('wenzhi_user') || '';
-  githubToken = localStorage.getItem('wenzhi_token') || '';
   if (!currentUser) {
     document.getElementById('login-modal').classList.add('show');
     document.getElementById('login-username').focus();
@@ -357,10 +351,8 @@ function doLogin() {
   document.getElementById('login-modal').classList.remove('show');
   updateNavUser();
   loadState();
-  // Try to load from GitHub if token exists
-  if (githubToken) {
-    loadFromGitHub();
-  }
+  // Load from Supabase cloud
+  loadFromSupabase();
   // Refresh UI
   if (dataLoaded) {
     populateFilters();
@@ -375,7 +367,6 @@ function updateNavUser() {
 
 function openSettings() {
   document.getElementById('settings-username').value = currentUser;
-  document.getElementById('settings-token').value = githubToken;
   updateSyncStatus();
   document.getElementById('settings-modal').classList.add('show');
 }
@@ -396,102 +387,81 @@ function switchUser() {
   updateNavUser();
   loadState();
   closeSettings();
-  if (githubToken) loadFromGitHub();
+  loadFromSupabase();
   if (dataLoaded) { populateFilters(); renderDashboard(); }
-}
-
-function saveToken() {
-  const token = document.getElementById('settings-token').value.trim();
-  if (!token) { alert('请输入 Token'); return; }
-  githubToken = token;
-  localStorage.setItem('wenzhi_token', token);
-  updateSyncStatus();
-  // Try immediate sync
-  syncToGitHub(false);
-}
-
-function removeToken() {
-  githubToken = '';
-  localStorage.removeItem('wenzhi_token');
-  document.getElementById('settings-token').value = '';
-  updateSyncStatus();
 }
 
 function updateSyncStatus() {
   const el = document.getElementById('sync-status');
   if (!el) return;
-  if (!githubToken) {
-    el.innerHTML = '⚪ 未开启同步（进度只保存在本机）';
-  } else {
-    el.innerHTML = `🟢 已开启同步（用户：${currentUser}）`;
-  }
+  el.innerHTML = '🟢 云端同步已开启（用户：' + currentUser + '）';
 }
 
-// ====== GITHUB SYNC ======
-async function syncToGitHub(isAuto) {
-  if (!githubToken || !currentUser) return;
-  const path = `progress/${currentUser}.json`;
+// ====== SUPABASE SYNC ======
+async function syncToSupabase(isAuto) {
+  if (!currentUser) return;
   const payload = {
     wrongBook: state.wrongBook, favorites: state.favorites,
     history: state.history, dailyStats: state.dailyStats,
     moduleStats: state.moduleStats, examHistory: state.examHistory,
     lastSaved: new Date().toISOString()
   };
-  const content = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
   const statusEl = document.getElementById('sync-status');
   if (isAuto && statusEl) statusEl.innerHTML = '🔄 同步中...';
 
   try {
-    // Get existing file SHA (for update)
-    let sha = fileShaCache[path];
-    if (!sha) {
-      const getResp = await fetch(`https://api.github.com/repos/${SYNC_REPO}/contents/${path}?ref=${SYNC_BRANCH}`, {
-        headers: { 'Authorization': `token ${githubToken}`, 'Accept': 'application/vnd.github+json' }
-      });
-      if (getResp.ok) {
-        const data = await getResp.json();
-        sha = data.sha;
-        fileShaCache[path] = sha;
-      }
-    }
-
-    // Write file
-    const body = { message: `Sync progress for ${currentUser}`, content: content, branch: SYNC_BRANCH };
-    if (sha) body.sha = sha;
-    const putResp = await fetch(`https://api.github.com/repos/${SYNC_REPO}/contents/${path}`, {
-      method: 'PUT',
-      headers: { 'Authorization': `token ${githubToken}`, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
+    const resp = await fetch(`${SUPABASE_URL}/rest/v1/user_progress?username=eq.${encodeURIComponent(currentUser)}`, {
+      method: 'PATCH',
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal'
+      },
+      body: JSON.stringify({ data: payload, updated_at: new Date().toISOString() })
     });
 
-    if (putResp.ok || putResp.status === 201) {
-      const data = await putResp.json();
-      fileShaCache[path] = data.content.sha;
+    if (resp.status === 204 || resp.ok) {
       if (statusEl) statusEl.innerHTML = `🟢 已同步（${new Date().toLocaleTimeString()}）`;
-    } else if (putResp.status === 409 && sha) {
-      // SHA mismatch - file was updated remotely, clear cache and retry
-      delete fileShaCache[path];
+    } else if (resp.status === 404 || resp.status === 406) {
+      // Row doesn't exist yet - create it with POST + upsert
+      const upsertResp = await fetch(`${SUPABASE_URL}/rest/v1/user_progress`, {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_KEY,
+          'Authorization': `Bearer ${SUPABASE_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=minimal,resolution=merge-duplicates'
+        },
+        body: JSON.stringify({ username: currentUser, data: payload, updated_at: new Date().toISOString() })
+      });
+      if (upsertResp.ok || upsertResp.status === 201) {
+        if (statusEl) statusEl.innerHTML = `🟢 已同步（${new Date().toLocaleTimeString()}）`;
+      } else {
+        if (statusEl) statusEl.innerHTML = '🔴 同步失败，请稍后重试';
+      }
     } else {
-      const err = await putResp.json().catch(() => ({}));
-      if (statusEl) statusEl.innerHTML = `🔴 同步失败: ${err.message || putResp.status}`;
+      if (statusEl) statusEl.innerHTML = '🔴 同步失败，请稍后重试';
     }
   } catch(e) {
-    if (statusEl) statusEl.innerHTML = `🔴 网络错误: ${e.message}`;
+    if (statusEl) statusEl.innerHTML = '🔴 网络错误，进度已保存在本地';
   }
 }
 
-async function loadFromGitHub() {
-  if (!githubToken || !currentUser) return;
-  const path = `progress/${currentUser}.json`;
+async function loadFromSupabase() {
+  if (!currentUser) return;
   try {
-    const resp = await fetch(`https://api.github.com/repos/${SYNC_REPO}/contents/${path}?ref=${SYNC_BRANCH}`, {
-      headers: { 'Authorization': `token ${githubToken}`, 'Accept': 'application/vnd.github+json' }
+    const resp = await fetch(`${SUPABASE_URL}/rest/v1/user_progress?username=eq.${encodeURIComponent(currentUser)}&select=data,updated_at`, {
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`
+      }
     });
-    if (!resp.ok) return; // No saved data yet
-    const data = await resp.json();
-    fileShaCache[path] = data.sha;
-    const remote = JSON.parse(decodeURIComponent(escape(atob(data.content))));
+    if (!resp.ok) return;
+    const rows = await resp.json();
+    if (!rows || rows.length === 0) return; // No saved data yet
 
+    const remote = rows[0].data;
     // Merge: remote takes precedence if newer, but keep local unsaved changes
     const localRaw = localStorage.getItem(getStorageKey());
     const local = localRaw ? JSON.parse(localRaw) : {};
@@ -499,7 +469,6 @@ async function loadFromGitHub() {
     const localTime = local.lastSaved ? new Date(local.lastSaved).getTime() : 0;
 
     if (remoteTime > localTime) {
-      // Remote is newer - load remote data
       state.wrongBook = remote.wrongBook || {};
       state.favorites = remote.favorites || {};
       state.history = remote.history || {};
@@ -515,8 +484,9 @@ async function loadFromGitHub() {
 }
 
 async function syncNow() {
-  await syncToGitHub(false);
-  if (document.getElementById('sync-status').textContent.includes('🟢')) {
+  await syncToSupabase(false);
+  const el = document.getElementById('sync-status');
+  if (el && el.textContent.includes('🟢')) {
     alert('同步成功！');
   }
 }
@@ -586,20 +556,22 @@ function renderDashboard() {
   const modules = {};
   QUIZ_DATA.forEach(q => {
     const m = q.module || '其他';
-    if (!modules[m]) modules[m] = {total:0, correct:0};
+    if (!modules[m]) modules[m] = {total:0, correct:0, answered:0};
     modules[m].total++;
     const h = state.history[q.id];
-    if (h && h.correct) modules[m].correct++;
+    if (h) { modules[m].answered++; if (h.correct) modules[m].correct++; }
   });
   
   let modHtml = '<div style="display:flex;flex-direction:column;gap:10px">';
   for (const [name, data] of Object.entries(modules)) {
-    const pct = data.total > 0 ? Math.round(data.correct/data.total*100) : 0;
+    const pct = data.answered > 0 ? Math.round(data.correct/data.answered*100) : 0;
+    const progressPct = data.total > 0 ? Math.round(data.answered/data.total*100) : 0;
     const color = pct >= 80 ? 'var(--green)' : pct >= 60 ? 'var(--gold)' : 'var(--red)';
     modHtml += `<div style="display:flex;align-items:center;gap:10px">
-      <span style="width:100px;font-size:13px">${name}</span>
-      <div class="score-bar" style="flex:1"><div class="score-fill" style="width:${pct}%;background:${color}"></div></div>
-      <span style="font-size:13px;width:50px;text-align:right;color:${color}">${pct}%</span>
+      <span style="width:90px;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${name}</span>
+      <span style="font-size:11px;color:var(--text-dim);width:60px;text-align:center;flex-shrink:0">${data.answered}/${data.total}</span>
+      <div class="score-bar" style="flex:1;position:relative"><div class="score-fill" style="width:${pct}%;background:${color}"></div><div style="position:absolute;top:0;left:0;height:100%;width:${progressPct}%;background:rgba(255,255,255,.06);border-radius:4px"></div></div>
+      <span style="font-size:13px;width:42px;text-align:right;color:${color};flex-shrink:0">${pct}%</span>
     </div>`;
   }
   modHtml += '</div>';
@@ -1453,13 +1425,18 @@ function renderStats() {
   
   let html = '<h3>模块掌握情况</h3>';
   for (const [name, data] of Object.entries(modules)) {
-    const total = data.correct + data.wrong;
-    const pct = total > 0 ? Math.round(data.correct/total*100) : 0;
-    html += `<div style="margin-bottom:12px">
-      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
-        <span>${name}</span><span>${data.correct}/${total} (${pct}%)</span>
+    const answered = data.correct + data.wrong;
+    const pct = answered > 0 ? Math.round(data.correct/answered*100) : 0;
+    const progressPct = data.total > 0 ? Math.round(answered/data.total*100) : 0;
+    html += `<div style="margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;margin-bottom:4px">
+        <span style="font-weight:600">${name}</span>
+        <span style="color:var(--text-dim)">已做 ${answered}/${data.total} 题 · 正确率 <span style="color:${pct>=80?'var(--green)':pct>=60?'var(--gold)':'var(--red)'};font-weight:600">${pct}%</span></span>
       </div>
-      <div class="score-bar"><div class="score-fill" style="width:${Math.max(pct,5)}%;background:var(--blue)"></div></div>
+      <div class="score-bar" style="position:relative">
+        <div class="score-fill" style="width:${Math.max(pct,3)}%;background:${pct>=80?'var(--green)':pct>=60?'var(--gold)':'var(--red)'}"></div>
+        <div style="position:absolute;top:0;left:0;height:100%;width:${progressPct}%;background:rgba(255,255,255,.06);border-radius:4px"></div>
+      </div>
     </div>`;
   }
   
