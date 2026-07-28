@@ -106,6 +106,17 @@ label{font-size:13px;color:var(--text-dim);margin-right:8px}
   .btn{padding:8px 14px;font-size:13px}
   .exam-grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}
   .timer{font-size:28px}
+  /* Knowledge cards */
+  .kp-card{background:var(--bg-main);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:14px;cursor:pointer;transition:all 0.2s}
+  .kp-card:hover{border-color:var(--gold);box-shadow:0 2px 12px rgba(0,0,0,0.1)}
+  .kp-card.mastered{opacity:0.6;border-color:var(--green)}
+  .kp-card.mastered .kp-badge{background:var(--green);color:#fff}
+  .kp-question{font-size:16px;font-weight:600;line-height:1.7}
+  .kp-answer{display:none;margin-top:14px;padding:14px;background:var(--bg);border-radius:8px;font-size:14px;line-height:1.8;color:var(--text)}
+  .kp-card.open .kp-answer{display:block}
+  .kp-meta{display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap}
+  .kp-badge{font-size:11px;padding:3px 8px;border-radius:12px;background:var(--bg);color:var(--text-dim)}
+  .kp-actions{display:flex;gap:8px}
   /* Sticky quiz controls on mobile so "next" button is always reachable */
   .quiz-controls{
     position:sticky;
@@ -129,6 +140,7 @@ label{font-size:13px;color:var(--text-dim);margin-right:8px}
   <a href="#wrong" class="nav-link" data-tab="wrong">错题本</a>
   <a href="#fav" class="nav-link" data-tab="fav">收藏夹</a>
   <a href="#stats" class="nav-link" data-tab="stats">学习统计</a>
+  <a href="#knowledge" class="nav-link" data-tab="knowledge">📖 知识点</a>
   <span class="nav-user" id="nav-user" onclick="openSettings()" title="点击设置/切换用户">👤 <span id="nav-username">未登录</span></span>
 </nav>
 <div class="container">
@@ -198,6 +210,18 @@ label{font-size:13px;color:var(--text-dim);margin-right:8px}
   <!-- Stats -->
   <div id="tab-stats" class="tab-content">
     <div class="card"><h2>学习统计</h2><div id="stats-content"></div></div>
+  </div>
+  <div id="tab-knowledge" class="tab-content">
+    <div class="card"><h2>知识点背诵</h2>
+      <div class="filter-bar" style="margin-bottom:12px">
+        <label>模块:</label><select id="kp-module"><option value="">全部</option></select>
+        <label>掌握:</label><select id="kp-mastery"><option value="">全部</option><option value="mastered">已掌握</option><option value="unmastered">未掌握</option></select>
+        <button class="btn btn-gold btn-sm" onclick="loadKnowledge()">刷新</button>
+        <span style="margin-left:auto;font-size:13px" id="kp-progress"></span>
+      </div>
+      <div id="kp-cards"></div>
+      <div style="text-align:center;margin-top:12px" id="kp-pager"></div>
+    </div>
   </div>
 </div>
 
@@ -310,7 +334,8 @@ let state = {
   dailyStats: {},
   moduleStats: {},
   examActive: null,
-  examHistory: {}
+  examHistory: {},
+  knowledgeMastered: {}  // knowledge point mastery: {kp_id: true}
 };
 
 function getStorageKey() {
@@ -333,6 +358,7 @@ function saveState() {
     wrongBook: state.wrongBook, favorites: state.favorites,
     history: state.history, dailyStats: state.dailyStats,
     moduleStats: state.moduleStats, examHistory: state.examHistory,
+    knowledgeMastered: state.knowledgeMastered,
     lastSaved: new Date().toISOString()
   };
   localStorage.setItem(getStorageKey(), JSON.stringify(data));
@@ -421,6 +447,7 @@ async function syncToSupabase(isAuto) {
     wrongBook: state.wrongBook, favorites: state.favorites,
     history: state.history, dailyStats: state.dailyStats,
     moduleStats: state.moduleStats, examHistory: state.examHistory,
+    knowledgeMastered: state.knowledgeMastered,
     lastSaved: new Date().toISOString()
   };
   const statusEl = document.getElementById('sync-status');
@@ -527,6 +554,7 @@ function switchTab(name) {
   if (name === 'fav') renderFavorites();
   if (name === 'stats') renderStats();
   if (name === 'exams') renderExamList();
+  if (name === 'knowledge') loadKnowledge();
   
   // End any active exam if leaving exams tab
   if (name !== 'exams' && state.examActive) {
@@ -1484,6 +1512,115 @@ document.addEventListener('keydown', e => {
     prevQuestion();
   }
 });
+
+// ====== KNOWLEDGE POINTS ======
+let KNOWLEDGE_DATA = [];
+let kpPageSize = 20;
+let kpCurrentPage = 1;
+let kpFilterModule = '';
+let kpFilterMastery = '';
+
+async function loadKnowledge() {
+  if (KNOWLEDGE_DATA.length === 0) {
+    try {
+      const resp = await fetch('knowledge.json');
+      if (!resp.ok) throw new Error('Failed to load knowledge data');
+      KNOWLEDGE_DATA = await resp.json();
+    } catch(e) {
+      document.getElementById('kp-cards').innerHTML = '<p style="padding:40px;text-align:center;color:var(--text-dim)">知识点数据加载中，请稍后刷新...</p>';
+      return;
+    }
+  }
+  kpFilterModule = document.getElementById('kp-module').value;
+  kpFilterMastery = document.getElementById('kp-mastery').value;
+  kpCurrentPage = 1;
+  renderKnowledgeCards();
+  populateKpModules();
+  updateKpProgress();
+}
+
+function populateKpModules() {
+  const modules = [...new Set(KNOWLEDGE_DATA.map(k => k.module))].sort();
+  const sel = document.getElementById('kp-module');
+  sel.innerHTML = '<option value="">全部</option>' + modules.map(m => `<option value="${m}">${m}</option>`).join('');
+}
+
+function renderKnowledgeCards() {
+  let data = KNOWLEDGE_DATA;
+  if (kpFilterModule) data = data.filter(k => k.module === kpFilterModule);
+  if (kpFilterMastery === 'mastered') data = data.filter(k => state.knowledgeMastered[k.id]);
+  if (kpFilterMastery === 'unmastered') data = data.filter(k => !state.knowledgeMastered[k.id]);
+  
+  const totalPages = Math.ceil(data.length / kpPageSize);
+  const start = (kpCurrentPage - 1) * kpPageSize;
+  const pageData = data.slice(start, start + kpPageSize);
+  
+  let html = '';
+  for (const kp of pageData) {
+    const mastered = state.knowledgeMastered[kp.id];
+    const cls = mastered ? 'mastered' : '';
+    const badge = mastered ? '✅ 已掌握' : '';
+    html += `<div class="kp-card ${cls}" id="kp-${kp.id}" onclick="toggleKpCard('${kp.id}', event)">
+      <div class="kp-question">${kp.question}</div>
+      <div class="kp-answer">${kp.answer}</div>
+      <div class="kp-meta">
+        <span class="kp-badge">${kp.module}</span>
+        ${kp.submodule ? `<span class="kp-badge">${kp.submodule}</span>` : ''}
+        ${badge ? `<span class="kp-badge" style="background:var(--green);color:#fff">${badge}</span>` : ''}
+        ${kp.keywords ? kp.keywords.slice(0,3).map(k => `<span class="kp-badge">${k}</span>`).join('') : ''}
+        <span class="kp-actions" style="margin-left:auto" onclick="event.stopPropagation()">
+          <button class="btn btn-outline btn-sm" onclick="toggleMastered('${kp.id}')">${mastered?'取消掌握':'标记掌握'}</button>
+        </span>
+      </div>
+    </div>`;
+  }
+  
+  if (!pageData.length) {
+    html = '<p style="padding:40px;text-align:center;color:var(--text-dim)">暂无匹配的知识点</p>';
+  }
+  
+  document.getElementById('kp-cards').innerHTML = html;
+  
+  // Pagination
+  let pagerHtml = '';
+  if (totalPages > 1) {
+    pagerHtml = `<button class="btn btn-outline btn-sm" onclick="kpPage(${kpCurrentPage-1})" ${kpCurrentPage<=1?'disabled':''}>上一页</button>
+      <span style="margin:0 10px;font-size:13px">${kpCurrentPage} / ${totalPages}</span>
+      <button class="btn btn-outline btn-sm" onclick="kpPage(${kpCurrentPage+1})" ${kpCurrentPage>=totalPages?'disabled':''}>下一页</button>`;
+  }
+  document.getElementById('kp-pager').innerHTML = pagerHtml;
+}
+
+function toggleKpCard(id, event) {
+  const card = document.getElementById('kp-' + id);
+  if (!card) return;
+  // Don't toggle if clicking on the action button
+  if (event.target.tagName === 'BUTTON') return;
+  card.classList.toggle('open');
+}
+
+function toggleMastered(id) {
+  if (state.knowledgeMastered[id]) {
+    delete state.knowledgeMastered[id];
+  } else {
+    state.knowledgeMastered[id] = true;
+  }
+  saveState();
+  renderKnowledgeCards();
+  updateKpProgress();
+}
+
+function kpPage(page) {
+  kpCurrentPage = Math.max(1, page);
+  renderKnowledgeCards();
+}
+
+function updateKpProgress() {
+  const total = KNOWLEDGE_DATA.length;
+  const mastered = Object.keys(state.knowledgeMastered).length;
+  const el = document.getElementById('kp-progress');
+  if (el) el.innerHTML = `已掌握: ${mastered}/${total} (${total>0?Math.round(mastered/total*100):0}%)`;
+}
 
 // ====== INIT ======
 loadData();
