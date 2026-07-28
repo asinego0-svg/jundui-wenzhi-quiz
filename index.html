@@ -14,6 +14,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;backgrou
 .nav-user{margin-left:auto;padding:8px 14px;border-radius:6px;color:var(--text-dim);font-size:13px;white-space:nowrap;cursor:pointer;transition:all .2s;flex-shrink:0}
 .nav-user:hover{background:var(--bg-card);color:var(--gold)}
 .container{max-width:900px;margin:0 auto;padding:20px 16px}
+/* Wider container on large screens - utilize the space */
+@media(min-width:1100px){.container{max-width:1200px}}
+@media(min-width:1600px){.container{max-width:1400px}}
+/* Slightly larger question-number dot on wide screens */
+@media(min-width:1100px){.q-dot{width:30px;height:30px;font-size:12px}}
+/* Two-column quiz layout on very wide screens: question+options left, question-nav right */
+@media(min-width:1500px){
+  .quiz-wide{display:grid;grid-template-columns:1.4fr 1fr;gap:24px;align-items:start}
+  .quiz-wide .question-nav{position:sticky;top:80px;max-height:calc(100vh - 120px);overflow-y:auto;padding-right:8px;margin-bottom:0;flex-wrap:wrap;align-content:flex-start}
+}
 .card{background:var(--bg-card);border-radius:12px;padding:24px;margin-bottom:16px;border:1px solid var(--border)}
 h2{font-size:20px;margin-bottom:16px;color:var(--gold)}
 h3{font-size:16px;margin-bottom:12px}
@@ -139,7 +149,6 @@ label{font-size:13px;color:var(--text-dim);margin-right:8px}
   <div id="tab-practice" class="tab-content">
     <div class="card">
       <h2>答题练习 <span id="q-progress" class="progress-text"></span></h2>
-      <div class="question-nav" id="q-nav"></div>
       <div class="filter-bar">
         <label>模块:</label><select id="filter-module"><option value="">全部</option></select>
         <label>抽题:</label><select id="filter-mode"><option value="random">随机</option><option value="seq">顺序</option><option value="wrong">错题</option><option value="fav">收藏</option></select>
@@ -147,17 +156,25 @@ label{font-size:13px;color:var(--text-dim);margin-right:8px}
         <label>刷题:</label><select id="practice-mode"><option value="study">背题模式</option><option value="practice">练习模式</option></select>
         <button class="btn btn-gold btn-sm" onclick="startPractice()">开始</button>
       </div>
-      <div id="quiz-area"></div>
-      <div id="quiz-feedback"></div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center" class="quiz-controls">
-        <button class="btn btn-gold" id="btn-submit" onclick="submitAnswer()">提交答案</button>
-        <button class="btn btn-gold" id="btn-submit-mul" onclick="submitMultiAnswer()" style="display:none">确认答案</button>
-        <button class="btn btn-outline btn-sm" id="btn-prev" onclick="prevQuestion()" style="display:none">⬅ 上一题</button>
-        <button class="btn btn-outline" id="btn-next" onclick="nextQuestion()" style="display:none">下一题 ➡</button>
-        <button class="btn btn-outline btn-sm" id="btn-fav" onclick="toggleFav()" style="display:none" title="收藏/取消收藏">⭐</button>
-        <button class="btn btn-outline btn-sm" id="btn-end" onclick="endPractice()">结束</button>
+      <div class="quiz-wide">
+        <div>
+          <div id="quiz-area"></div>
+          <div id="quiz-feedback"></div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center" class="quiz-controls">
+            <button class="btn btn-gold" id="btn-submit" onclick="submitAnswer()">提交答案</button>
+            <button class="btn btn-gold" id="btn-submit-mul" onclick="submitMultiAnswer()" style="display:none">确认答案</button>
+            <button class="btn btn-outline btn-sm" id="btn-prev" onclick="prevQuestion()" style="display:none">⬅ 上一题</button>
+            <button class="btn btn-outline" id="btn-next" onclick="nextQuestion()" style="display:none">下一题 ➡</button>
+            <button class="btn btn-outline btn-sm" id="btn-fav" onclick="toggleFav()" style="display:none" title="收藏/取消收藏">⭐</button>
+            <button class="btn btn-outline btn-sm" id="btn-end" onclick="endPractice()">结束</button>
+          </div>
+          <textarea class="fav-note" id="fav-note" placeholder="添加笔记..." style="display:none"></textarea>
+        </div>
+        <div>
+          <h3 style="font-size:14px;color:var(--text-dim);margin-bottom:8px">题号导航</h3>
+          <div class="question-nav" id="q-nav"></div>
+        </div>
       </div>
-      <textarea class="fav-note" id="fav-note" placeholder="添加笔记..." style="display:none"></textarea>
     </div>
   </div>
   
